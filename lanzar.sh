@@ -33,7 +33,6 @@ echo "Iniciando reconocimiento de voz..."
     --config="$SCRIPT_DIR/app/config/nerd-dictation.py" \
     --simulate-input-tool=XCLIP \
     --numbers-as-digits \
-    --full-sentence \
     --continuous \
     &
 
