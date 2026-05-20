@@ -30,6 +30,8 @@ fi
 echo "Iniciando reconocimiento de voz..."
 "$VENV/bin/python" "$SCRIPT_DIR/app/nerd-dictation" begin \
     --vosk-model-dir="$MODEL_DIR" \
+    --config="$SCRIPT_DIR/app/config/nerd-dictation.py" \
+    --simulate-input-tool=XCLIP \
     --numbers-as-digits \
     --full-sentence \
     --continuous \
