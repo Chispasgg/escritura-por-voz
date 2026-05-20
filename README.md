@@ -1,85 +1,59 @@
-# Nerd Dictation
+# Escritura por voz
 
-*Offline Speech to Text for Desktop Linux.*
+Dictado de voz offline para Linux en español. Reconoce lo que dices y lo escribe directamente donde tengas el foco, sin servicios en la nube.
 
-Utility that provides speech-to-text for Linux without being tied to a desktop environment, using [VOSK-API](https://github.com/alphacep/vosk-api). Single-file Python script with minimal dependencies.
+## Tecnologías
 
-## Usage
+| Tecnología                                         | Rol                                                                          |
+| -------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [VOSK](https://alphacephei.com/vosk/)              | Motor de reconocimiento de voz offline                                       |
+| Modelo `vosk-model-es-0.42`                        | Modelo grande de español, entrenado a 16 kHz                                 |
+| [PipeWire](https://pipewire.org/)                  | Captura de audio del micrófono (`pw-cat`)                                    |
+| [xdotool](https://github.com/jordansissel/xdotool) | Simulación de teclado y pegado en X11                                        |
+| [xclip](https://github.com/astrand/xclip)          | Portapapeles — permite escribir tildes y caracteres especiales correctamente |
+| Python 3                                           | Lenguaje del script principal                                                |
 
-Bind `begin`/`end`/`cancel` to shortcut keys.
+## Cómo funciona
 
-```sh
-nerd-dictation begin
-nerd-dictation end
-```
+1. `lanzar.sh` arranca el proceso de reconocimiento en segundo plano
+2. El micrófono captura audio vía PipeWire a 16 kHz
+3. VOSK transcribe el audio localmente usando el modelo español
+4. El texto reconocido se copia al portapapeles con `xclip`
+5. `xdotool` simula `Ctrl+V` para pegarlo donde esté el foco activo
+6. `parar.sh` detiene el proceso
 
-## Install
+El uso del portapapeles para escribir (en lugar de simular tecla a tecla) resuelve el problema de las tildes y caracteres especiales en teclados con dead keys.
 
-```sh
-pip3 install vosk
-git clone https://github.com/ideasman42/nerd-dictation.git
-cd nerd-dictation
-wget https://alphacephei.com/kaldi/models/vosk-model-small-en-us-0.15.zip
-unzip vosk-model-small-en-us-0.15.zip
-mv vosk-model-small-en-us-0.15 model
-```
-
-To test:
-
-```sh
-./nerd-dictation begin --vosk-model-dir=./model &
-# Start speaking.
-./nerd-dictation end
-```
-
-Move model to default path to avoid passing `--vosk-model-dir` every time:
+## Uso
 
 ```sh
-mkdir -p ~/.config/nerd-dictation
-mv ./model ~/.config/nerd-dictation
+./lanzar.sh   # iniciar dictado
+./parar.sh    # detener dictado
 ```
 
-## Dependencies
+## Requisitos
 
-- Python 3.6+
-- `vosk` (pip)
-- Audio input: `parec` (PulseAudio, default), `sox`, or `pw-cat` (PipeWire)
-- Input simulation: `xdotool` (X11, default), `ydotool`, `dotool`, `wtype` (Wayland)
+```sh
+# Sistema
+sudo apt install xdotool xclip python3 python3-venv
 
-## Configuration
-
-Place at `~/.config/nerd-dictation/nerd-dictation.py`:
-
-```python
-def nerd_dictation_process(text):
-    return text.upper()
+# PipeWire (normalmente ya instalado en distros modernas)
+sudo apt install pipewire
 ```
 
-See `examples/` for more complete configurations (word replacement, begin/end commands, grammar files).
+El primer arranque instala automáticamente `vosk` en un entorno virtual local (`.venv/`). Los siguientes arranques son inmediatos.
 
-## Features
+## Estructura
 
-- **Numbers as digits** — `--numbers-as-digits`: "three hundred" → "300"
-- **Timeout** — `--timeout SECONDS`: end automatically when no speech detected
-- **Output modes** — keystroke simulation (default) or `--output=STDOUT`
-- **Suspend/Resume** — keep process in memory between sessions to avoid reload delay
-- **Grammar files** — restrict recognized phrases via `--vosk-grammar-file` for better accuracy
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `begin` | Start dictation |
-| `end` | Stop and type recognized text |
-| `cancel` | Stop without typing |
-| `suspend` | Pause (keeps model loaded) |
-| `resume` | Resume after suspend |
-
-Run `nerd-dictation begin --help` for all options.
-
-## Paths
-
-| Path | Purpose |
-|------|---------|
-| `~/.config/nerd-dictation/nerd-dictation.py` | User configuration |
-| `~/.config/nerd-dictation/model` | Language model (default location) |
+```
+app/
+  nerd-dictation        # script principal (Python)
+  config/
+    nerd-dictation.py   # configuración: espaciado entre segmentos
+  examples/
+    default/            # ejemplo de reemplazos de palabras
+    vosk_grammar/       # ejemplo de gramática restringida
+lanzar.sh               # iniciar reconocimiento
+parar.sh                # detener reconocimiento
+model/                  # modelo de lenguaje español (ignorado en git)
+```
