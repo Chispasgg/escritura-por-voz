@@ -32,6 +32,8 @@ echo "Iniciando reconocimiento de voz..."
     --vosk-model-dir="$MODEL_DIR" \
     --config="$SCRIPT_DIR/app/config/nerd-dictation.py" \
     --simulate-input-tool=XCLIP \
+    --input=PW-CAT \
+    --sample-rate=16000 \
     --numbers-as-digits \
     --continuous \
     &
