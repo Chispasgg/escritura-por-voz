@@ -28,7 +28,7 @@ if ! "$VENV/bin/python" -c "import vosk" 2>/dev/null; then
 fi
 
 echo "Iniciando reconocimiento de voz..."
-"$VENV/bin/python" "$SCRIPT_DIR/nerd-dictation" begin \
+"$VENV/bin/python" "$SCRIPT_DIR/app/nerd-dictation" begin \
     --vosk-model-dir="$MODEL_DIR" \
     --numbers-as-digits \
     --full-sentence \

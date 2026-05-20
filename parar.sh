@@ -8,4 +8,4 @@ if [ ! -f "$COOKIE" ]; then
 fi
 
 echo "Parando el reconocimiento de voz..."
-"$SCRIPT_DIR/nerd-dictation" end
+"$SCRIPT_DIR/app/nerd-dictation" end
