@@ -32,7 +32,7 @@ from app.whisper_ptt.config import (
     ruta_config_por_defecto,
 )
 from app.whisper_ptt.daemon import Daemon, DaemonYaEnMarcha
-from app.whisper_ptt.grabador import GrabadorError, GrabadorPipeWire
+from app.whisper_ptt.grabador import GrabadorPipeWire
 from app.whisper_ptt.hotkey import CombinacionInvalida, GestorHotkey, GrabFallido
 from app.whisper_ptt.salida import SalidaX11
 from app.whisper_ptt.transcriptor import TranscriptorError, TranscriptorWhisper
@@ -99,15 +99,13 @@ def main(argv: list[str] | None = None) -> int:
     # ------------------------------------------------------------------
     # 3. Grabador
     # ------------------------------------------------------------------
-    try:
-        grabador = GrabadorPipeWire(
-            frecuencia_muestreo=config.audio.frecuencia_muestreo,
-            canales=config.audio.canales,
-            duracion_minima_s=config.audio.duracion_minima_s,
-        )
-    except GrabadorError as exc:
-        log.error("Error al inicializar el grabador: %s", exc)
-        return 1
+    # GrabadorPipeWire.__init__ solo almacena parámetros; no lanza.
+    # El proceso pw-record se lanza más tarde, en iniciar().
+    grabador = GrabadorPipeWire(
+        frecuencia_muestreo=config.audio.frecuencia_muestreo,
+        canales=config.audio.canales,
+        duracion_minima_s=config.audio.duracion_minima_s,
+    )
 
     # ------------------------------------------------------------------
     # 4. Salida

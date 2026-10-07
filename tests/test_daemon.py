@@ -4,6 +4,17 @@ Tests unitarios del módulo app.whisper_ptt.daemon.
 Sin X11, GPU ni micrófono: se usan dobles para las cuatro dependencias
 (GrabadorProtocol, TranscriptorProtocol, Salida, GestorHotkey).
 
+Sincronización determinista:
+  - _TranscriptorDoble.esperar_transcripcion(n): espera hasta que
+    transcribir() haya completado (incluyendo cuando lanza) n veces.
+  - _SalidaDoble.esperar(n): espera n escrituras exitosas.
+  - _SalidaDoble.esperar_llamada(n): espera n llamadas totales,
+    incluyendo las que lanzan error.
+  - _GestorDoble._escuchando: Event que se activa en cuanto escuchar()
+    entra en el bucle, garantizando que el PID ya está creado.
+  No se usa time.sleep() en ningún test; toda espera tiene timeout
+  explícito que fallará el test si el daemon no responde a tiempo.
+
 Cobertura:
   - Flujo pulsar → soltar → transcribir → pegar.
   - Audio vacío (grabación demasiado corta): se descarta sin transcribir.
@@ -82,7 +93,9 @@ class _TranscriptorDoble:
     """
     Transcriptor doble: devuelve textos predefinidos en orden.
 
-    Si la lista se agota, devuelve el último texto repetido.
+    Notificación determinista: esperar_transcripcion(n) bloquea hasta que
+    transcribir() haya completado n veces (incluyendo las llamadas que
+    lanzan error).
     """
 
     def __init__(
@@ -94,61 +107,104 @@ class _TranscriptorDoble:
         self._error = error
         self._indice = 0
         self.llamadas: list[np.ndarray] = []
+        self._cv = threading.Condition()
+        self._n_completadas = 0
 
     def transcribir(self, audio: np.ndarray) -> str:
         self.llamadas.append(audio)
-        if self._error is not None:
-            raise self._error
-        texto = self._textos[min(self._indice, len(self._textos) - 1)]
-        self._indice += 1
-        return texto
+        try:
+            if self._error is not None:
+                raise self._error
+            texto = self._textos[min(self._indice, len(self._textos) - 1)]
+            self._indice += 1
+            return texto
+        finally:
+            # Notificar siempre, incluso al lanzar, para que esperar_transcripcion()
+            # pueda usarse tanto en casos de éxito como de error.
+            with self._cv:
+                self._n_completadas += 1
+                self._cv.notify_all()
+
+    def esperar_transcripcion(self, n: int = 1, timeout: float = 2.0) -> bool:
+        """Retorna True si transcribir() completó al menos n veces antes del timeout."""
+        limite = time.monotonic() + timeout
+        with self._cv:
+            while self._n_completadas < n:
+                restante = limite - time.monotonic()
+                if restante <= 0:
+                    return False
+                self._cv.wait(timeout=restante)
+            return True
 
 
 class _SalidaDoble:
     """
-    Salida doble: acumula los textos escritos y notifica por Event.
+    Salida doble: acumula los textos escritos y notifica por Condition.
 
-    esperar(n, timeout) espera hasta recibir al menos n textos o que
-    expire el timeout, para sincronizar los tests con el hilo trabajador.
+    esperar(n, timeout): espera n escrituras exitosas.
+    esperar_llamada(n, timeout): espera n llamadas totales, incluyendo
+        las que lanzan error. Úsalo para sincronizar con el hilo trabajador
+        en tests que verifican robustez ante errores de salida.
     """
 
     def __init__(self, error: SalidaError | None = None) -> None:
         self._error = error
         self.textos: list[str] = []
-        self._lock = threading.Lock()
-        self._evento = threading.Condition(self._lock)
+        self._cv = threading.Condition()
+        self._n_llamadas = 0  # total de llamadas (éxito + error)
 
     def escribir(self, texto: str) -> None:
+        # Notificar antes de lanzar para que esperar_llamada() funcione
+        # también en el caso de error: el trabajador aún no ha procesado
+        # el except, pero la llamada sí ha ocurrido.
+        with self._cv:
+            self._n_llamadas += 1
+            if self._error is None:
+                self.textos.append(texto)
+            self._cv.notify_all()
         if self._error is not None:
             raise self._error
-        with self._evento:
-            self.textos.append(texto)
-            self._evento.notify_all()
 
     def esperar(self, n: int = 1, timeout: float = 2.0) -> bool:
-        """Retorna True si se recibieron al menos *n* textos antes del timeout."""
+        """Retorna True si se recibieron al menos *n* escrituras exitosas."""
         limite = time.monotonic() + timeout
-        with self._evento:
+        with self._cv:
             while len(self.textos) < n:
                 restante = limite - time.monotonic()
                 if restante <= 0:
                     return False
-                self._evento.wait(timeout=restante)
+                self._cv.wait(timeout=restante)
+            return True
+
+    def esperar_llamada(self, n: int = 1, timeout: float = 2.0) -> bool:
+        """Retorna True si se produjeron al menos *n* llamadas (éxito o error)."""
+        limite = time.monotonic() + timeout
+        with self._cv:
+            while self._n_llamadas < n:
+                restante = limite - time.monotonic()
+                if restante <= 0:
+                    return False
+                self._cv.wait(timeout=restante)
             return True
 
 
 class _GestorDoble:
     """
     GestorHotkey doble: escuchar() se bloquea hasta que detener() sea llamado.
-    Permite ejecutar acciones dentro del «bucle» para testar el arranque completo.
+
+    _escuchando: Event que se activa en cuanto escuchar() entra en el
+    bucle de espera. Como arrancar() crea el PID antes de llamar a
+    escuchar(), esperar _escuchando garantiza que el PID ya existe.
     """
 
     def __init__(self, acciones_al_escuchar=None) -> None:
-        # acciones_al_escuchar: callable opcional que se ejecuta tras arrancar
         self._parar = threading.Event()
         self._acciones = acciones_al_escuchar
+        # Se activa al inicio de escuchar(), antes del bloqueo.
+        self._escuchando = threading.Event()
 
     def escuchar(self) -> None:
+        self._escuchando.set()
         if self._acciones is not None:
             self._acciones()
         self._parar.wait()
@@ -241,11 +297,13 @@ class TestAudioVacio(unittest.TestCase):
         _detener_trabajador(self.daemon)
 
     def test_audio_vacio_no_transcribe(self) -> None:
+        # al_soltar() detecta len(audio)==0 de forma síncrona y retorna
+        # sin encolar nada. No hay nada que esperar: el trabajador no
+        # recibe ningún ítem para este caso, así que comprobamos
+        # directamente al retornar al_soltar().
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
 
-        # Esperar un poco para que el trabajador pudiera haber procesado algo.
-        time.sleep(0.1)
         self.assertEqual(self.transcriptor.llamadas, [], "No debería haber llamado al transcriptor.")
         self.assertEqual(self.salida.textos, [], "No debería haber pegado nada.")
 
@@ -272,7 +330,10 @@ class TestTranscripcionVacia(unittest.TestCase):
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
 
-        time.sleep(0.2)
+        # Esperar a que el trabajador haya procesado el ítem antes de
+        # comprobar que salida nunca fue llamada.
+        ok = self.transcriptor.esperar_transcripcion(1)
+        self.assertTrue(ok, "El trabajador no procesó el ítem a tiempo.")
         self.assertEqual(self.salida.textos, [], "No debería haber pegado nada con texto vacío.")
 
 
@@ -319,10 +380,11 @@ class TestErrorGrabadorDetener(unittest.TestCase):
         _detener_trabajador(self.daemon)
 
     def test_error_detener_no_encola(self) -> None:
+        # al_soltar() captura el GrabadorError de forma síncrona y retorna
+        # sin encolar nada. No hay ítem en la cola que esperar.
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
 
-        time.sleep(0.1)
         self.assertEqual(self.transcriptor.llamadas, [])
         self.assertEqual(self.salida.textos, [])
 
@@ -344,18 +406,23 @@ class TestErrorTranscriptor(unittest.TestCase):
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
 
-        time.sleep(0.2)
+        # Esperar a que el trabajador haya procesado el ítem (y el error).
+        ok = self.transcriptor.esperar_transcripcion(1)
+        self.assertTrue(ok, "El trabajador no procesó el ítem a tiempo.")
         self.assertEqual(self.salida.textos, [], "Nada debería haberse pegado.")
         self.assertTrue(self.daemon._hilo_trabajador.is_alive())
 
     def test_error_transcriptor_daemon_sigue_procesando(self) -> None:
         """Tras un error, el daemon puede procesar la siguiente pulsación."""
-        # Primera: error
+        # Primera pulsación: error de transcripción.
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
-        time.sleep(0.2)
+        # Esperar a que el trabajador complete la transcripción fallida antes
+        # de cambiar el doble; así el segundo ítem usará el nuevo transcriptor.
+        ok = self.transcriptor.esperar_transcripcion(1)
+        self.assertTrue(ok, "El trabajador no procesó el primer ítem a tiempo.")
 
-        # Segunda: sin error (cambiamos el transcriptor en el daemon)
+        # Segunda pulsación: sin error.
         self.daemon._transcriptor = _TranscriptorDoble(textos=["segunda pulsación"])
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
@@ -382,17 +449,22 @@ class TestErrorSalida(unittest.TestCase):
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
 
-        time.sleep(0.3)
+        # Esperar a que el trabajador haya llamado a salida.escribir() (con error).
+        ok = self.salida.esperar_llamada(1)
+        self.assertTrue(ok, "El trabajador no llamó a salida a tiempo.")
         self.assertTrue(self.daemon._hilo_trabajador.is_alive())
 
     def test_error_salida_daemon_sigue_procesando(self) -> None:
         """Tras un error de salida, el daemon puede procesar la siguiente."""
-        # Primera: error de salida.
+        # Primera pulsación: error de salida.
         self.daemon.al_pulsar()
         self.daemon.al_soltar()
-        time.sleep(0.2)
+        # Esperar a que el trabajador haya completado la llamada fallida antes
+        # de cambiar el doble de salida.
+        ok = self.salida.esperar_llamada(1)
+        self.assertTrue(ok, "El trabajador no llamó a salida a tiempo.")
 
-        # Segunda: salida sin error.
+        # Segunda pulsación: salida sin error.
         salida_ok = _SalidaDoble()
         self.daemon._salida = salida_ok
         self.daemon.al_pulsar()
@@ -463,7 +535,6 @@ class TestPID(unittest.TestCase):
         self.assertEqual(contenido, str(os.getpid()))
 
     def test_pid_obsoleto_reemplazado(self) -> None:
-        # Escribir un PID de proceso que sabemos que no existe.
         # PID 99999999 es casi con certeza inexistente.
         pid_muerto = 99_999_999
         self.ruta.write_text(str(pid_muerto))
@@ -505,9 +576,13 @@ class TestPID(unittest.TestCase):
 
 class TestParadaLimpia(unittest.TestCase):
     """
-    arrancar() con un GestorDoble que llama detener() después de
-    enqueuing una pulsación. Verifica que el PID se borra y el hilo
+    arrancar() con un GestorDoble. Verifica que el PID se borra y el hilo
     trabajador termina.
+
+    Sincronización: _GestorDoble._escuchando se activa en cuanto
+    escuchar() entra en el bucle de espera. Como arrancar() crea el PID
+    antes de llamar a escuchar(), esperar _escuchando garantiza que el
+    PID ya existe en el momento de la comprobación.
     """
 
     def test_pid_borrado_al_salir(self) -> None:
@@ -517,19 +592,19 @@ class TestParadaLimpia(unittest.TestCase):
             grabador = _GrabadorDoble(audio=_audio(0.5))
             transcriptor = _TranscriptorDoble(textos=["hola"])
             daemon = Daemon(grabador, transcriptor, salida)
+            gestor = _GestorDoble()
 
-            # El gestor doble para inmediatamente después de arrancar.
-            gestor = _GestorDoble(acciones_al_escuchar=None)
-
-            # Lanzamos arrancar en un hilo separado para poder llamar detener().
             hilo = threading.Thread(
                 target=lambda: daemon.arrancar(gestor, ruta_pid=ruta_pid),
                 daemon=True,
             )
             hilo.start()
 
-            # Dar tiempo al daemon para crear el PID y entrar en el bucle.
-            time.sleep(0.1)
+            # Esperar determinísticamente a que el daemon haya creado el PID.
+            self.assertTrue(
+                gestor._escuchando.wait(timeout=2.0),
+                "El daemon no entró en el bucle a tiempo.",
+            )
             self.assertTrue(ruta_pid.exists(), "El PID debería existir durante la ejecución.")
 
             # Detener el gestor → arrancar() retorna → PID se borra.
@@ -554,7 +629,11 @@ class TestParadaLimpia(unittest.TestCase):
             )
             hilo_arrancar.start()
 
-            time.sleep(0.1)
+            # Esperar a que el daemon esté en el bucle antes de detenerlo.
+            self.assertTrue(
+                gestor._escuchando.wait(timeout=2.0),
+                "El daemon no entró en el bucle a tiempo.",
+            )
             gestor.detener()
             hilo_arrancar.join(timeout=3.0)
 
