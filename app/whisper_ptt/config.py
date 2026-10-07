@@ -68,7 +68,8 @@ class ConfigWhisper:
 @dataclass(frozen=True)
 class ConfigSalida:
     espacio_final: bool
-    tecla_pegar: str  # combinación enviada por xdotool para pegar (ctrl+v; en terminales ctrl+shift+v)
+    tecla_pegar: str  # combinación que xdotool envía para pegar
+    selecciones: list[str]  # selecciones X11 a las que se copia: p. ej. ["clipboard", "primary"]
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,8 @@ class Config:
 
 _MOTORES_VALIDOS = frozenset({"whisper", "vosk"})
 
+_SELECCIONES_VALIDAS = frozenset({"clipboard", "primary"})
+
 _BOOL_TRUE = frozenset({"true", "yes", "on", "1"})
 _BOOL_FALSE = frozenset({"false", "no", "off", "0"})
 
@@ -109,6 +112,34 @@ def _obtener_requerido(parser: configparser.ConfigParser, seccion: str, campo: s
     if valor is None or not valor.strip():
         raise ConfigError(seccion, campo, "campo obligatorio ausente o vacío")
     return valor.strip()
+
+
+def _selecciones(seccion: str, campo: str, valor: str) -> list[str]:
+    """Parsea y valida la lista de selecciones X11 del portapapeles.
+
+    Valores permitidos: 'clipboard', 'primary'. Al menos uno. Sin duplicados.
+    """
+    items = [item.strip().lower() for item in valor.split(",") if item.strip()]
+    if not items:
+        raise ConfigError(seccion, campo, "debe contener al menos un valor ('clipboard', 'primary')")
+    invalidos = [i for i in items if i not in _SELECCIONES_VALIDAS]
+    if invalidos:
+        raise ConfigError(
+            seccion,
+            campo,
+            f"valores no permitidos: {invalidos}; se aceptan {sorted(_SELECCIONES_VALIDAS)}",
+        )
+    # Detectar duplicados preservando el orden de aparición
+    vistos: set[str] = set()
+    duplicados: list[str] = []
+    for i in items:
+        if i in vistos:
+            duplicados.append(i)
+        else:
+            vistos.add(i)
+    if duplicados:
+        raise ConfigError(seccion, campo, f"valores duplicados: {duplicados}")
+    return items
 
 
 def _motor(valor: str) -> str:
@@ -254,6 +285,7 @@ def cargar_config(ruta: Path | str | None = None) -> Config:
     salida = ConfigSalida(
         espacio_final=_booleano(sec, "espacio_final", _obtener_requerido(parser, sec, "espacio_final")),
         tecla_pegar=_obtener_requerido(parser, sec, "tecla_pegar"),
+        selecciones=_selecciones(sec, "selecciones", _obtener_requerido(parser, sec, "selecciones")),
     )
 
     # [vosk]

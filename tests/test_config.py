@@ -43,6 +43,7 @@ prompt_inicial =
 [salida]
 espacio_final = true
 tecla_pegar = ctrl+v
+selecciones = clipboard,primary
 
 [vosk]
 directorio_modelo = model
@@ -141,6 +142,7 @@ class TestCargaValida(unittest.TestCase):
         cfg = cargar_config(self.ruta)
         self.assertTrue(cfg.salida.espacio_final)
         self.assertEqual(cfg.salida.tecla_pegar, "ctrl+v")
+        self.assertEqual(cfg.salida.selecciones, ["clipboard", "primary"])
         self.assertEqual(cfg.vosk.directorio_modelo, "model")
 
     def test_motor_vosk_valido(self):
@@ -247,6 +249,38 @@ class TestValidaciones(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             self._cargar_con("tecla_pegar = ctrl+v", "tecla_pegar =")
         self.assertEqual(ctx.exception.campo, "tecla_pegar")
+
+    def test_selecciones_valor_invalido(self):
+        """Valores no permitidos en 'selecciones' → ConfigError con campo correcto."""
+        with self.assertRaises(ConfigError) as ctx:
+            self._cargar_con("selecciones = clipboard,primary", "selecciones = clipboard,xclipboard")
+        err = ctx.exception
+        self.assertEqual(err.campo, "selecciones")
+        self.assertIn("no permitidos", err.motivo)
+
+    def test_selecciones_vacia(self):
+        """Campo 'selecciones' vacío → ConfigError."""
+        with self.assertRaises(ConfigError) as ctx:
+            self._cargar_con("selecciones = clipboard,primary", "selecciones =")
+        self.assertEqual(ctx.exception.campo, "selecciones")
+
+    def test_selecciones_duplicados(self):
+        """Valores duplicados en 'selecciones' → ConfigError."""
+        with self.assertRaises(ConfigError) as ctx:
+            self._cargar_con("selecciones = clipboard,primary", "selecciones = clipboard,clipboard")
+        err = ctx.exception
+        self.assertEqual(err.campo, "selecciones")
+        self.assertIn("duplicados", err.motivo)
+
+    def test_selecciones_una_sola_valida(self):
+        """Una sola selección válida es aceptada."""
+        cfg = None
+        ruta = _escribir_ini(_INI_VALIDO.replace("selecciones = clipboard,primary", "selecciones = primary"))
+        try:
+            cfg = cargar_config(ruta)
+        finally:
+            ruta.unlink(missing_ok=True)
+        self.assertEqual(cfg.salida.selecciones, ["primary"])
 
 
 class TestFicheroInexistente(unittest.TestCase):

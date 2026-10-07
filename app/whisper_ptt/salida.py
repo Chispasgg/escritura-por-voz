@@ -88,11 +88,8 @@ def _runner_real(args: list[str], datos: bytes | None = None) -> None:
     except subprocess.TimeoutExpired:
         raise SalidaError(nombre, "tiempo de espera agotado (5 s)") from None
     except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or b"").decode(errors="replace").strip()
-        raise SalidaError(
-            nombre,
-            f"código de retorno {exc.returncode}" + (f": {stderr}" if stderr else ""),
-        ) from None
+        # Con DEVNULL, exc.stderr siempre es None: solo incluimos el código de retorno.
+        raise SalidaError(nombre, f"código de retorno {exc.returncode}") from None
 
 
 # ---------------------------------------------------------------------------
@@ -105,21 +102,22 @@ class SalidaX11:
     Pega texto en la ventana activa mediante xclip + xdotool.
 
     Pasos:
-      1. Copia el texto al portapapeles con ``xclip -selection clipboard``
-         (texto por stdin, UTF-8, para que tildes y ñ funcionen).
+      1. Para cada selección configurada, copia el texto con
+         ``xclip -selection <selección>`` (texto por stdin, UTF-8).
+         Copiar a clipboard y primary permite usar shift+Insert tanto en
+         WezTerm/xterm (pega PRIMARY) como en GTK/Firefox (pega CLIPBOARD).
       2. Simula la tecla de pegado con
          ``xdotool key --clearmodifiers <tecla_pegar>``.
          ``--clearmodifiers`` limpia el estado de modificadores activos
-         (p. ej. Control o Escape remanentes del hotkey) para que el Ctrl
-         enviado sea limpio.
+         (p. ej. Control o Escape remanentes del hotkey).
 
     Args:
         config_salida: Sección ``[salida]`` de la configuración. Determina
             si se añade un espacio al final.
         tecla_pegar: Combinación que xdotool debe simular para pegar.
-            Por defecto ``"ctrl+v"``, que funciona en la mayoría de
-            aplicaciones X11. En emuladores de terminal suele necesitarse
-            ``"ctrl+shift+v"``; véanse las Observaciones en la entrega T-002.
+            Requerido; se pasa desde ``config.salida.tecla_pegar``.
+        selecciones: Lista de selecciones X11 a las que copiar el texto.
+            Requerido; se pasa desde ``config.salida.selecciones``.
         runner: Función que ejecuta un comando externo. Se inyecta para
             facilitar los tests sin X11.
     """
@@ -128,11 +126,13 @@ class SalidaX11:
         self,
         config_salida: ConfigSalida,
         *,
-        tecla_pegar: str = "ctrl+v",
+        tecla_pegar: str,
+        selecciones: list[str],
         runner=_runner_real,
     ) -> None:
         self._espacio_final: bool = config_salida.espacio_final
         self._tecla_pegar: str = tecla_pegar
+        self._selecciones: list[str] = selecciones
         self._runner = runner
 
     def escribir(self, texto: str) -> None:
@@ -149,13 +149,13 @@ class SalidaX11:
         if self._espacio_final:
             contenido = contenido + " "
 
-        # 1. Copiar al portapapeles.
+        datos = contenido.encode("utf-8")
+
+        # 1. Copiar a cada selección X11.
         #    xclip se queda vivo en segundo plano sirviendo la selección; el
         #    runner usa DEVNULL para no bloquear esperando que cierre sus pipes.
-        self._runner(
-            ["xclip", "-selection", "clipboard"],
-            contenido.encode("utf-8"),
-        )
+        for seleccion in self._selecciones:
+            self._runner(["xclip", "-selection", seleccion], datos)
 
         # 2. Simular la tecla de pegado.
         self._runner(

@@ -113,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     salida = SalidaX11(
         config.salida,
         tecla_pegar=config.salida.tecla_pegar,
+        selecciones=config.salida.selecciones,
     )
 
     # ------------------------------------------------------------------

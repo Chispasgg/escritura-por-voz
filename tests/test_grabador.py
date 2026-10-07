@@ -9,6 +9,7 @@ incorrectos (doble iniciar, detener sin iniciar, duración mínima).
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import struct
 import subprocess
@@ -482,14 +483,25 @@ class TestMuerteEspontanea(unittest.TestCase):
 # Test de integración con pw-record real
 # ---------------------------------------------------------------------------
 
+# Requiere el binario pw-record Y la variable de opt-in para tests de escritorio.
+# Definir ESCRITURA_TESTS_INTEGRACION=1 para ejecutar tests que graban audio real.
+_PW_RECORD_INTEGRACION = bool(
+    shutil.which("pw-record") is not None and os.environ.get("ESCRITURA_TESTS_INTEGRACION") == "1"
+)
 
-@unittest.skipUnless(shutil.which("pw-record") is not None, "pw-record no disponible")
+
+@unittest.skipUnless(
+    _PW_RECORD_INTEGRACION,
+    "pw-record no disponible o ESCRITURA_TESTS_INTEGRACION=1 no definido",
+)
 class TestIntegracionPwRecord(unittest.TestCase):
     """Prueba con el binario real de pw-record.
 
     Habría detectado la regresión de T-011 antes de que llegara al daemon:
     con _RETURNCODES_NORMALES, iniciar() + detener() con pw-record real lanzaba
     GrabadorError porque pw-record sale con código 1 al recibir SIGTERM.
+
+    Para ejecutar: ESCRITURA_TESTS_INTEGRACION=1 python -m pytest tests/test_grabador.py
     """
 
     def test_ciclo_real_no_lanza_y_devuelve_float32(self):
@@ -499,7 +511,11 @@ class TestIntegracionPwRecord(unittest.TestCase):
             canales=1,
             duracion_minima_s=0.0,
         )
-        g.iniciar()
+        try:
+            g.iniciar()
+        except GrabadorError:
+            # PipeWire instalado pero sin servidor activo (CI, contenedor, etc.)
+            self.skipTest("PipeWire no disponible")
         time.sleep(0.5)
         arr = g.detener()
         self.assertIsInstance(arr, np.ndarray)
