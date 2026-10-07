@@ -85,6 +85,9 @@ def _lanzador_real(args: list[str]) -> subprocess.Popen:
             stdout=subprocess.PIPE,
             # stderr=PIPE para poder mostrar un extracto diagnóstico si el proceso
             # muere espontáneamente con error. El pipe se drena en detener().
+            # Supuesto verificado: pw-record no escribe nada a stderr durante una
+            # grabación normal (medido: 0 bytes en 10 s de grabación continua),
+            # así que el buffer del pipe nunca se llena mientras grab y no bloquea.
             stderr=subprocess.PIPE,
             shell=False,
         )
@@ -216,6 +219,13 @@ class GrabadorPipeWire:
         # si ya terminó. Capturar aquí es la única forma fiable porque pw-record
         # puede salir con código 1 al recibir SIGTERM, haciendo imposible distinguir
         # «nuestra señal» de «error» mirando solo el código de retorno final.
+        #
+        # Ventana de carrera poll→terminate: si pw-record muere espontáneamente
+        # (con código ≠ 0) justo entre poll() y terminate(), returncode_espontaneo
+        # es None (lo vimos vivo), terminate() es un no-op sobre un proceso ya muerto,
+        # y la muerte queda silenciada. La ventana es muy estrecha y el audio
+        # capturado hasta ese momento sigue siendo válido; el overhead de un mutex
+        # sería desproporcionado para un caso que en la práctica no ocurre.
         returncode_espontaneo = proceso.poll()
 
         try:

@@ -268,6 +268,10 @@ class GestorHotkey:
         display y cierra los fds del socketpair al salir, tanto en salida
         normal como por excepción.
 
+        **Uso único**: cierra el socketpair al terminar. Una segunda llamada
+        fallaría porque los fds ya están cerrados. Para reiniciar el grab
+        hay que crear una nueva instancia de GestorHotkey.
+
         Raises:
             CombinacionInvalida: Si la cadena de combinación es inválida.
             GrabFallido:         Si XGrabKey devuelve BadAccess.

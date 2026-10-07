@@ -109,6 +109,10 @@ class TranscriptorWhisper:
 
     Args:
         config: Sección [whisper] de la configuración.
+                ``config.prompt_inicial`` vacío o solo espacios se normaliza
+                internamente a None; faster-whisper trata "" y None de forma
+                distinta, y omitir el prompt es preferible a pasar una cadena
+                vacía que podría sesgar la transcripción.
         fabrica: Callable(nombre, dispositivo, tipo_computo) -> modelo.
                  Por defecto usa faster_whisper.WhisperModel. Se inyecta
                  en tests para evitar descarga y GPU.

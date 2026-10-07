@@ -69,7 +69,7 @@ class ConfigWhisper:
 class ConfigSalida:
     espacio_final: bool
     tecla_pegar: str  # combinación que xdotool envía para pegar
-    selecciones: list[str]  # selecciones X11 a las que se copia: p. ej. ["clipboard", "primary"]
+    selecciones: tuple[str, ...]  # selecciones X11 a las que se copia: p. ej. ("clipboard", "primary")
 
 
 @dataclass(frozen=True)
@@ -114,10 +114,11 @@ def _obtener_requerido(parser: configparser.ConfigParser, seccion: str, campo: s
     return valor.strip()
 
 
-def _selecciones(seccion: str, campo: str, valor: str) -> list[str]:
+def _selecciones(seccion: str, campo: str, valor: str) -> tuple[str, ...]:
     """Parsea y valida la lista de selecciones X11 del portapapeles.
 
     Valores permitidos: 'clipboard', 'primary'. Al menos uno. Sin duplicados.
+    Devuelve una tupla para mantener la inmutabilidad del dataclass frozen.
     """
     items = [item.strip().lower() for item in valor.split(",") if item.strip()]
     if not items:
@@ -139,7 +140,7 @@ def _selecciones(seccion: str, campo: str, valor: str) -> list[str]:
             vistos.add(i)
     if duplicados:
         raise ConfigError(seccion, campo, f"valores duplicados: {duplicados}")
-    return items
+    return tuple(items)
 
 
 def _motor(valor: str) -> str:

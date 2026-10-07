@@ -332,6 +332,30 @@ class TestErroresTranscripcion(unittest.TestCase):
         self.assertEqual(ctx.exception.codigo, COD_TRANSCRIPCION)
         self.assertIn("fallo interno del motor", ctx.exception.detalle)
 
+    def test_error_en_iteracion_generador_lanza_transcriptor_error(self):
+        """Si el generador de segmentos lanza al iterar → TranscriptorError(COD_TRANSCRIPCION).
+
+        transcribe() puede devolver un generador lazy; faster-whisper lo evalúa
+        solo al iterar. Si ese generador lanza, el except del transcribir() debe
+        capturarlo igual que cualquier otro error.
+        """
+
+        def _gen_roto():
+            yield _segmento("primer segmento")
+            raise RuntimeError("fallo al leer el siguiente segmento")
+
+        class ModeloConGeneradorRoto:
+            def transcribe(self, audio, **kwargs):
+                return _gen_roto(), None
+
+        modelo = ModeloConGeneradorRoto()
+
+        t = TranscriptorWhisper(_config(), fabrica=lambda *_: modelo)
+        with self.assertRaises(TranscriptorError) as ctx:
+            t.transcribir(np.ones(16000, dtype=np.float32))
+        self.assertEqual(ctx.exception.codigo, COD_TRANSCRIPCION)
+        self.assertIn("fallo al leer el siguiente segmento", ctx.exception.detalle)
+
 
 # ---------------------------------------------------------------------------
 # Test: cumple el Protocol

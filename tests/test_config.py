@@ -142,7 +142,7 @@ class TestCargaValida(unittest.TestCase):
         cfg = cargar_config(self.ruta)
         self.assertTrue(cfg.salida.espacio_final)
         self.assertEqual(cfg.salida.tecla_pegar, "ctrl+v")
-        self.assertEqual(cfg.salida.selecciones, ["clipboard", "primary"])
+        self.assertEqual(cfg.salida.selecciones, ("clipboard", "primary"))
         self.assertEqual(cfg.vosk.directorio_modelo, "model")
 
     def test_motor_vosk_valido(self):
@@ -280,7 +280,7 @@ class TestValidaciones(unittest.TestCase):
             cfg = cargar_config(ruta)
         finally:
             ruta.unlink(missing_ok=True)
-        self.assertEqual(cfg.salida.selecciones, ["primary"])
+        self.assertEqual(cfg.salida.selecciones, ("primary",))
 
 
 class TestFicheroInexistente(unittest.TestCase):

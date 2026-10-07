@@ -335,13 +335,17 @@ class TestProcesarEvento(unittest.TestCase):
 
     def _pulsar(self) -> None:
         """
-        Pone la máquina en estado PULSADA y resetea los contadores espía.
+        Pone la máquina en estado PULSADA pasando por el código real
+        (_procesar_evento con un KeyPress) y resetea los contadores espía.
 
-        El callback al_pulsar se dispara (es inevitable: la máquina lo llama),
-        pero lo descartamos limpiando las listas para que la aserción posterior
-        mida solo lo que ocurre durante la llamada a _procesar_evento.
+        Se usa el camino real en lugar de tocar _maquina directamente para
+        que _pulsar() ejercite la misma ruta de código que los tests comprueban,
+        evitando que pase aunque la lógica de _procesar_evento cambie.
+        El callback al_pulsar se descarta limpiando las listas; la aserción
+        posterior mide solo lo que ocurre en el evento bajo prueba.
         """
-        self.gestor._maquina.procesar("pulsar")
+        dpy = _DisplayCola()
+        self.gestor._procesar_evento(dpy, _ev(X.KeyPress, _KC, 100), _COMB)
         self.pulsaciones.clear()
         self.soltadas.clear()
 

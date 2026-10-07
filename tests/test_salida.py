@@ -24,13 +24,13 @@ from app.whisper_ptt.salida import Salida, SalidaError, SalidaX11
 
 def _config(
     espacio_final: bool = True,
-    selecciones: list[str] | None = None,
+    selecciones: tuple[str, ...] | None = None,
 ) -> ConfigSalida:
     """Crea un ConfigSalida para tests. selecciones por defecto: clipboard + primary."""
     return ConfigSalida(
         espacio_final=espacio_final,
         tecla_pegar="ctrl+v",
-        selecciones=selecciones if selecciones is not None else ["clipboard", "primary"],
+        selecciones=selecciones if selecciones is not None else ("clipboard", "primary"),
     )
 
 
@@ -272,7 +272,7 @@ class TestMultiplesSelecciones(unittest.TestCase):
     def test_orden_selecciones_antes_de_tecla(self) -> None:
         """Todas las llamadas a xclip preceden a la llamada a xdotool."""
         runner = _RunnerCapture()
-        cfg = _config(espacio_final=False, selecciones=["clipboard", "primary"])
+        cfg = _config(espacio_final=False, selecciones=("clipboard", "primary"))
         salida = SalidaX11(cfg, tecla_pegar=cfg.tecla_pegar, selecciones=cfg.selecciones, runner=runner)
         salida.escribir("prueba")
 
@@ -282,7 +282,7 @@ class TestMultiplesSelecciones(unittest.TestCase):
     def test_una_sola_seleccion(self) -> None:
         """Con una sola selección hay una llamada xclip y una xdotool (total 2)."""
         runner = _RunnerCapture()
-        cfg = _config(espacio_final=False, selecciones=["clipboard"])
+        cfg = _config(espacio_final=False, selecciones=("clipboard",))
         salida = SalidaX11(cfg, tecla_pegar=cfg.tecla_pegar, selecciones=cfg.selecciones, runner=runner)
         salida.escribir("prueba")
 
@@ -293,7 +293,7 @@ class TestMultiplesSelecciones(unittest.TestCase):
     def test_dos_selecciones_clipboard_y_primary(self) -> None:
         """Con dos selecciones: xclip clipboard, xclip primary, luego xdotool."""
         runner = _RunnerCapture()
-        cfg = _config(espacio_final=False, selecciones=["clipboard", "primary"])
+        cfg = _config(espacio_final=False, selecciones=("clipboard", "primary"))
         salida = SalidaX11(cfg, tecla_pegar=cfg.tecla_pegar, selecciones=cfg.selecciones, runner=runner)
         salida.escribir("prueba")
 
@@ -312,7 +312,7 @@ class TestMultiplesSelecciones(unittest.TestCase):
     def test_ambas_selecciones_reciben_mismo_contenido(self) -> None:
         """Todas las selecciones reciben los mismos bytes de contenido."""
         runner = _RunnerCapture()
-        cfg = _config(espacio_final=False, selecciones=["clipboard", "primary"])
+        cfg = _config(espacio_final=False, selecciones=("clipboard", "primary"))
         salida = SalidaX11(cfg, tecla_pegar=cfg.tecla_pegar, selecciones=cfg.selecciones, runner=runner)
         salida.escribir("mismo texto")
 

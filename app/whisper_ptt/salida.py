@@ -127,12 +127,12 @@ class SalidaX11:
         config_salida: ConfigSalida,
         *,
         tecla_pegar: str,
-        selecciones: list[str],
+        selecciones: tuple[str, ...],
         runner=_runner_real,
     ) -> None:
         self._espacio_final: bool = config_salida.espacio_final
         self._tecla_pegar: str = tecla_pegar
-        self._selecciones: list[str] = selecciones
+        self._selecciones: tuple[str, ...] = selecciones
         self._runner = runner
 
     def escribir(self, texto: str) -> None:
