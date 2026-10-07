@@ -19,6 +19,7 @@ import numpy as np
 
 from app.whisper_ptt.grabador import (
     COD_NO_INICIADO,
+    COD_PROCESO_FALLO,
     COD_YA_INICIADO,
     GrabadorError,
     GrabadorPipeWire,
@@ -44,6 +45,8 @@ class _ProcesoFalso:
         leer_fd, escribir_fd = os.pipe()
         self.stdout = io.open(leer_fd, "rb")
         self._escribir = io.open(escribir_fd, "wb")
+        # stderr=None imita un Popen sin stderr capturado; detener() lo omite
+        self.stderr = None
         self._datos = datos
         self._retardo_s = retardo_s
         self.returncode: int | None = None
@@ -288,8 +291,6 @@ class TestProcesoNoExiste(unittest.TestCase):
     """Si el ejecutable no existe, iniciar() lanza GrabadorError."""
 
     def test_ejecutable_inexistente(self):
-        from app.whisper_ptt.grabador import COD_PROCESO_FALLO
-
         g = GrabadorPipeWire(
             frecuencia_muestreo=_HZ,
             canales=_CANALES,
@@ -299,6 +300,134 @@ class TestProcesoNoExiste(unittest.TestCase):
         with self.assertRaises(GrabadorError) as ctx:
             g.iniciar()
         self.assertEqual(ctx.exception.codigo, COD_PROCESO_FALLO)
+
+
+# ---------------------------------------------------------------------------
+# Proceso falso para muerte espontánea
+# ---------------------------------------------------------------------------
+
+
+class _ProcesoFalsoMuerteEspontanea:
+    """
+    Simula un proceso que ya murió antes de que llamemos a terminate().
+    Tiene stdout vacío y stderr con un mensaje de error configurable.
+    terminate() lanza OSError (proceso ya terminado), igual que Popen real.
+    """
+
+    def __init__(self, returncode: int, stderr_datos: bytes = b"") -> None:
+        import os
+
+        # stdout vacío: el proceso no grabó nada
+        leer_fd, escribir_fd = os.pipe()
+        self.stdout = io.open(leer_fd, "rb")
+        io.open(escribir_fd, "wb").close()
+
+        # stderr con el mensaje de error
+        leer_err_fd, escribir_err_fd = os.pipe()
+        self.stderr = io.open(leer_err_fd, "rb")
+        stderr_pipe = io.open(escribir_err_fd, "wb")
+        try:
+            stderr_pipe.write(stderr_datos)
+            stderr_pipe.flush()
+        finally:
+            stderr_pipe.close()
+
+        self.returncode = returncode
+
+    def terminate(self) -> None:
+        # El proceso ya no existe; simula el OSError que lanza Popen real
+        raise OSError(3, "No such process")
+
+    def kill(self) -> None:
+        raise OSError(3, "No such process")
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+
+# ---------------------------------------------------------------------------
+# Tests de muerte espontánea
+# ---------------------------------------------------------------------------
+
+
+class TestMuerteEspontanea(unittest.TestCase):
+    """
+    Verifica la detección de muerte espontánea de pw-record.
+
+    Casos:
+    - Código de error (> 0) → GrabadorError(COD_PROCESO_FALLO) con extracto stderr.
+    - Código de señal ajena (< -9) → GrabadorError(COD_PROCESO_FALLO).
+    - Terminado por nuestra señal (-15) → audio normal, sin excepción.
+    """
+
+    def _lanzador_muerte(self, returncode: int, stderr_datos: bytes = b""):
+        def lanzar(_args: list[str]) -> _ProcesoFalsoMuerteEspontanea:
+            return _ProcesoFalsoMuerteEspontanea(returncode, stderr_datos)
+
+        return lanzar
+
+    def test_muerte_con_codigo_error_lanza_grabador_error(self):
+        """returncode=1 → GrabadorError(COD_PROCESO_FALLO) con fragmento de stderr."""
+        stderr_msg = b"audio/sink: No such device"
+        g = GrabadorPipeWire(
+            frecuencia_muestreo=_HZ,
+            canales=_CANALES,
+            duracion_minima_s=0.0,
+            lanzador=self._lanzador_muerte(1, stderr_msg),
+        )
+        g.iniciar()
+        with self.assertRaises(GrabadorError) as ctx:
+            g.detener()
+        err = ctx.exception
+        self.assertEqual(err.codigo, COD_PROCESO_FALLO)
+        # El código de retorno debe aparecer en el mensaje
+        self.assertIn("1", err.detalle)
+        # El extracto de stderr debe aparecer en el mensaje
+        self.assertIn("No such device", err.detalle)
+
+    def test_muerte_con_senal_ajena_lanza_grabador_error(self):
+        """returncode=-11 (SIGSEGV) → GrabadorError(COD_PROCESO_FALLO)."""
+        g = GrabadorPipeWire(
+            frecuencia_muestreo=_HZ,
+            canales=_CANALES,
+            duracion_minima_s=0.0,
+            lanzador=self._lanzador_muerte(-11),
+        )
+        g.iniciar()
+        with self.assertRaises(GrabadorError) as ctx:
+            g.detener()
+        self.assertEqual(ctx.exception.codigo, COD_PROCESO_FALLO)
+
+    def test_stderr_acotado_a_2k(self):
+        """Si stderr supera 2 KiB, el fragmento incluido no supera ese tamaño."""
+        # stderr de 4 KiB: los últimos 2 KiB terminan en 'Z' repetida
+        stderr_datos = b"A" * 2048 + b"Z" * 2048
+        g = GrabadorPipeWire(
+            frecuencia_muestreo=_HZ,
+            canales=_CANALES,
+            duracion_minima_s=0.0,
+            lanzador=self._lanzador_muerte(2, stderr_datos),
+        )
+        g.iniciar()
+        with self.assertRaises(GrabadorError) as ctx:
+            g.detener()
+        # El fragmento incluye los últimos 2 KiB (las Z), no los primeros (A)
+        self.assertIn("Z", ctx.exception.detalle)
+
+    def test_muerte_por_nuestra_senal_no_lanza_error(self):
+        """returncode=-15 (nuestra SIGTERM) → audio normal, sin GrabadorError."""
+        datos = _generar_pcm_s16(160)
+        g = GrabadorPipeWire(
+            frecuencia_muestreo=_HZ,
+            canales=_CANALES,
+            duracion_minima_s=0.0,
+            lanzador=_lanzador_falso(datos),
+        )
+        g.iniciar()
+        # _ProcesoFalso.terminate() establece returncode=-15; no debe lanzar error
+        arr = g.detener()
+        self.assertIsInstance(arr, np.ndarray)
+        self.assertEqual(arr.dtype, np.float32)
 
 
 if __name__ == "__main__":

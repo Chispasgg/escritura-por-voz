@@ -83,7 +83,9 @@ def _lanzador_real(args: list[str]) -> subprocess.Popen:
         return subprocess.Popen(
             args,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            # stderr=PIPE para poder mostrar un extracto diagnóstico si el proceso
+            # muere espontáneamente con error. El pipe se drena en detener().
+            stderr=subprocess.PIPE,
             shell=False,
         )
     except FileNotFoundError:
@@ -100,6 +102,14 @@ def _lanzador_real(args: list[str]) -> subprocess.Popen:
 # Bytes por muestra para el formato s16 (PCM signed 16-bit little-endian)
 _BYTES_POR_MUESTRA = 2
 _RANGO_S16 = 32768.0  # 2^15 — divisor para normalizar a [-1, 1]
+
+# Returncodes que indican terminación esperada y no-errónea:
+#   0   → pw-record salió limpiamente (raro mid-grabación pero no es un fallo)
+#  -15  → SIGTERM que nosotros enviamos con terminate()
+#  -9   → SIGKILL que nosotros enviamos tras timeout
+# Cualquier otro código (positivo = error del proceso; otro negativo = señal ajena)
+# se considera muerte espontánea con error y se propaga como GrabadorError.
+_RETURNCODES_NORMALES: frozenset[int | None] = frozenset({0, -15, -9})
 
 
 class GrabadorPipeWire:
@@ -222,6 +232,30 @@ class GrabadorPipeWire:
                 except OSError:
                     pass
 
+        # Leer stderr para diagnóstico (proceso ya muerto → extremo de escritura
+        # cerrado → read() drena el buffer del pipe y retorna en EOF sin bloquear).
+        # Tomamos los últimos 2 KiB para no acumular mensajes de error extensos.
+        stderr_snippet = b""
+        if proceso.stderr is not None:
+            try:
+                stderr_snippet = proceso.stderr.read()[-2048:]
+            except OSError:
+                pass
+            finally:
+                try:
+                    proceso.stderr.close()
+                except OSError:
+                    pass
+
+        # Detectar muerte espontánea con error: si el código de retorno no es uno
+        # de los que nosotros provocamos, pw-record falló por su cuenta.
+        if proceso.returncode not in _RETURNCODES_NORMALES:
+            fragmento = stderr_snippet.decode("utf-8", errors="replace").strip()
+            raise GrabadorError(
+                COD_PROCESO_FALLO,
+                f"pw-record terminó inesperadamente (código {proceso.returncode}). Stderr: {fragmento!r}",
+            )
+
         # Duración mínima: si la grabación es muy corta, descartarla
         if duracion < self._duracion_minima_s:
             return np.array([], dtype=np.float32)
@@ -266,7 +300,13 @@ def _leer_stdout(proceso: subprocess.Popen, buffer: io.BytesIO) -> None:
     Lee stdout del proceso en bloques y los acumula en buffer.
     Diseñado para ejecutarse en un hilo daemon.
     """
-    assert proceso.stdout is not None
+    if proceso.stdout is None:
+        # El lanzador debe configurar stdout=PIPE; si no lo hizo, no hay audio.
+        # La excepción se pierde (hilo daemon) pero el bug queda explícito en traza.
+        raise GrabadorError(
+            COD_PROCESO_FALLO,
+            "El lanzador no configuró stdout=PIPE; imposible leer audio.",
+        )
     try:
         while True:
             bloque = proceso.stdout.read(4096)
