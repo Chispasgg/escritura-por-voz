@@ -23,7 +23,7 @@ from app.whisper_ptt.salida import Salida, SalidaError, SalidaX11
 
 
 def _config(espacio_final: bool = True) -> ConfigSalida:
-    return ConfigSalida(espacio_final=espacio_final)
+    return ConfigSalida(espacio_final=espacio_final, tecla_pegar="ctrl+v")
 
 
 class _RunnerCapture:

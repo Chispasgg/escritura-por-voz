@@ -42,6 +42,7 @@ prompt_inicial =
 
 [salida]
 espacio_final = true
+tecla_pegar = ctrl+v
 
 [vosk]
 directorio_modelo = model
@@ -63,6 +64,37 @@ duracion_minima_s = 0.3
 
 [salida]
 espacio_final = true
+tecla_pegar = ctrl+v
+
+[vosk]
+directorio_modelo = model
+"""
+
+# INI con [whisper] completa pero sin el campo "modelo", para probar campo ausente
+_INI_WHISPER_SIN_MODELO = """\
+[general]
+motor = whisper
+fichero_pid = /tmp/evp.pid
+
+[tecla]
+combinacion = Control+Escape
+
+[audio]
+frecuencia_muestreo = 16000
+canales = 1
+duracion_minima_s = 0.3
+
+[whisper]
+dispositivo = cuda
+tipo_computo = float16
+idioma = es
+filtro_vad = true
+tamano_haz = 5
+prompt_inicial =
+
+[salida]
+espacio_final = true
+tecla_pegar = ctrl+v
 
 [vosk]
 directorio_modelo = model
@@ -71,9 +103,7 @@ directorio_modelo = model
 
 def _escribir_ini(contenido: str) -> Path:
     """Escribe el contenido en un fichero temporal y devuelve su ruta."""
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".ini", delete=False, encoding="utf-8"
-    )
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False, encoding="utf-8")
     f.write(contenido)
     f.close()
     return Path(f.name)
@@ -110,6 +140,7 @@ class TestCargaValida(unittest.TestCase):
     def test_salida_y_vosk(self):
         cfg = cargar_config(self.ruta)
         self.assertTrue(cfg.salida.espacio_final)
+        self.assertEqual(cfg.salida.tecla_pegar, "ctrl+v")
         self.assertEqual(cfg.vosk.directorio_modelo, "model")
 
     def test_motor_vosk_valido(self):
@@ -199,6 +230,24 @@ class TestValidaciones(unittest.TestCase):
         finally:
             ruta.unlink(missing_ok=True)
 
+    def test_campo_ausente_en_seccion(self):
+        """[whisper] existe pero falta 'modelo': el error debe nombrar sección y campo."""
+        ruta = _escribir_ini(_INI_WHISPER_SIN_MODELO)
+        try:
+            with self.assertRaises(ConfigError) as ctx:
+                cargar_config(ruta)
+            err = ctx.exception
+            self.assertEqual(err.seccion, "whisper")
+            self.assertEqual(err.campo, "modelo")
+            self.assertIn("ausente", err.motivo)
+        finally:
+            ruta.unlink(missing_ok=True)
+
+    def test_tecla_pegar_vacia(self):
+        with self.assertRaises(ConfigError) as ctx:
+            self._cargar_con("tecla_pegar = ctrl+v", "tecla_pegar =")
+        self.assertEqual(ctx.exception.campo, "tecla_pegar")
+
 
 class TestFicheroInexistente(unittest.TestCase):
     """El fichero de config ausente debe lanzar ConfigError, no FileNotFoundError."""
@@ -216,9 +265,7 @@ class TestExpansionPid(unittest.TestCase):
 
     def _ini_con_xdg(self) -> Path:
         return _escribir_ini(
-            _INI_VALIDO.replace(
-                "fichero_pid = /tmp/evp.pid", "fichero_pid = $XDG_RUNTIME_DIR/evp.pid"
-            )
+            _INI_VALIDO.replace("fichero_pid = /tmp/evp.pid", "fichero_pid = $XDG_RUNTIME_DIR/evp.pid")
         )
 
     def test_expansion_xdg_definido(self):

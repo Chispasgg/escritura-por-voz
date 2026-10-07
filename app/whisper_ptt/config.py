@@ -68,6 +68,7 @@ class ConfigWhisper:
 @dataclass(frozen=True)
 class ConfigSalida:
     espacio_final: bool
+    tecla_pegar: str  # combinación enviada por xdotool para pegar (ctrl+v; en terminales ctrl+shift+v)
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,19 @@ _BOOL_TRUE = frozenset({"true", "yes", "on", "1"})
 _BOOL_FALSE = frozenset({"false", "no", "off", "0"})
 
 
+def _obtener_requerido(parser: configparser.ConfigParser, seccion: str, campo: str) -> str:
+    """Lee un campo obligatorio de una sección; lanza ConfigError si está ausente o vacío.
+
+    Separar esta detección de los validadores numéricos y booleanos evita mensajes
+    confusos como «debe ser un entero, se recibió ''» cuando el campo simplemente
+    no está en el fichero.
+    """
+    valor = parser.get(seccion, campo, fallback=None)
+    if valor is None or not valor.strip():
+        raise ConfigError(seccion, campo, "campo obligatorio ausente o vacío")
+    return valor.strip()
+
+
 def _motor(valor: str) -> str:
     normalizado = valor.strip().lower()
     if normalizado not in _MOTORES_VALIDOS:
@@ -112,9 +126,7 @@ def _entero_positivo(seccion: str, campo: str, valor: str) -> int:
     try:
         n = int(valor)
     except ValueError:
-        raise ConfigError(
-            seccion, campo, f"debe ser un entero, se recibió '{valor}'"
-        ) from None
+        raise ConfigError(seccion, campo, f"debe ser un entero, se recibió '{valor}'") from None
     if n <= 0:
         raise ConfigError(seccion, campo, f"debe ser positivo, se recibió {n}")
     return n
@@ -124,9 +136,7 @@ def _float_positivo(seccion: str, campo: str, valor: str) -> float:
     try:
         n = float(valor)
     except ValueError:
-        raise ConfigError(
-            seccion, campo, f"debe ser un número, se recibió '{valor}'"
-        ) from None
+        raise ConfigError(seccion, campo, f"debe ser un número, se recibió '{valor}'") from None
     if n <= 0:
         raise ConfigError(seccion, campo, f"debe ser positivo, se recibió {n}")
     return n
@@ -141,17 +151,16 @@ def _booleano(seccion: str, campo: str, valor: str) -> bool:
     raise ConfigError(seccion, campo, f"debe ser true/false, se recibió '{valor}'")
 
 
-def _no_vacio(seccion: str, campo: str, valor: str) -> str:
-    """Valida que el valor no sea vacío ni solo espacios."""
-    if not valor.strip():
-        raise ConfigError(seccion, campo, "no puede estar vacío")
-    return valor.strip()
-
-
 def _expandir_pid(raw: str) -> str:
-    """Sustituye $XDG_RUNTIME_DIR por su valor del entorno; usa /tmp si no está definido."""
-    # Usamos una sustitución explícita en lugar de os.path.expandvars para
-    # controlar exactamente qué variable se expande y aplicar el fallback.
+    """Sustituye $XDG_RUNTIME_DIR por su valor del entorno; usa /tmp como ruta de respaldo.
+
+    En una sesión gráfica con systemd $XDG_RUNTIME_DIR siempre existe (típicamente
+    /run/user/<uid>). /tmp es solo el fallback para entornos sin systemd o sin sesión
+    de usuario (p. ej. scripts de arranque, SSH sin ForwardX11).
+
+    Se usa una sustitución explícita en lugar de os.path.expandvars para controlar
+    exactamente qué variable se expande y aplicar el fallback de forma predecible.
+    """
     directorio = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
     return raw.replace("$XDG_RUNTIME_DIR", directorio)
 
@@ -179,8 +188,8 @@ def cargar_config(ruta: Path | str | None = None) -> Config:
         Árbol de dataclasses inmutables con la configuración validada.
 
     Raises:
-        ConfigError: Si el fichero no existe, falta una sección obligatoria
-                     o cualquier valor es inválido.
+        ConfigError: Si el fichero no existe, falta una sección obligatoria,
+                     falta un campo obligatorio o cualquier valor es inválido.
     """
     if ruta is None:
         ruta = ruta_config_por_defecto()
@@ -205,70 +214,52 @@ def cargar_config(ruta: Path | str | None = None) -> Config:
     # [general]
     sec = "general"
     general = ConfigGeneral(
-        motor=_motor(parser.get(sec, "motor", fallback="")),
-        fichero_pid=_expandir_pid(
-            _no_vacio(sec, "fichero_pid", parser.get(sec, "fichero_pid", fallback=""))
-        ),
+        motor=_motor(_obtener_requerido(parser, sec, "motor")),
+        fichero_pid=_expandir_pid(_obtener_requerido(parser, sec, "fichero_pid")),
     )
 
     # [tecla]
     sec = "tecla"
     tecla = ConfigTecla(
-        combinacion=_no_vacio(
-            sec, "combinacion", parser.get(sec, "combinacion", fallback="")
-        ),
+        combinacion=_obtener_requerido(parser, sec, "combinacion"),
     )
 
     # [audio]
     sec = "audio"
     audio = ConfigAudio(
         frecuencia_muestreo=_entero_positivo(
-            sec,
-            "frecuencia_muestreo",
-            parser.get(sec, "frecuencia_muestreo", fallback=""),
+            sec, "frecuencia_muestreo", _obtener_requerido(parser, sec, "frecuencia_muestreo")
         ),
-        canales=_entero_positivo(
-            sec, "canales", parser.get(sec, "canales", fallback="")
-        ),
+        canales=_entero_positivo(sec, "canales", _obtener_requerido(parser, sec, "canales")),
         duracion_minima_s=_float_positivo(
-            sec, "duracion_minima_s", parser.get(sec, "duracion_minima_s", fallback="")
+            sec, "duracion_minima_s", _obtener_requerido(parser, sec, "duracion_minima_s")
         ),
     )
 
     # [whisper]
     sec = "whisper"
     whisper = ConfigWhisper(
-        modelo=_no_vacio(sec, "modelo", parser.get(sec, "modelo", fallback="")),
-        dispositivo=_no_vacio(
-            sec, "dispositivo", parser.get(sec, "dispositivo", fallback="")
-        ),
-        tipo_computo=_no_vacio(
-            sec, "tipo_computo", parser.get(sec, "tipo_computo", fallback="")
-        ),
-        idioma=_no_vacio(sec, "idioma", parser.get(sec, "idioma", fallback="")),
-        filtro_vad=_booleano(
-            sec, "filtro_vad", parser.get(sec, "filtro_vad", fallback="")
-        ),
-        tamano_haz=_entero_positivo(
-            sec, "tamano_haz", parser.get(sec, "tamano_haz", fallback="")
-        ),
+        modelo=_obtener_requerido(parser, sec, "modelo"),
+        dispositivo=_obtener_requerido(parser, sec, "dispositivo"),
+        tipo_computo=_obtener_requerido(parser, sec, "tipo_computo"),
+        idioma=_obtener_requerido(parser, sec, "idioma"),
+        filtro_vad=_booleano(sec, "filtro_vad", _obtener_requerido(parser, sec, "filtro_vad")),
+        tamano_haz=_entero_positivo(sec, "tamano_haz", _obtener_requerido(parser, sec, "tamano_haz")),
+        # prompt_inicial es opcional: se permite vacío
         prompt_inicial=parser.get(sec, "prompt_inicial", fallback=""),
     )
 
     # [salida]
     sec = "salida"
     salida = ConfigSalida(
-        espacio_final=_booleano(
-            sec, "espacio_final", parser.get(sec, "espacio_final", fallback="")
-        ),
+        espacio_final=_booleano(sec, "espacio_final", _obtener_requerido(parser, sec, "espacio_final")),
+        tecla_pegar=_obtener_requerido(parser, sec, "tecla_pegar"),
     )
 
     # [vosk]
     sec = "vosk"
     vosk = ConfigVosk(
-        directorio_modelo=_no_vacio(
-            sec, "directorio_modelo", parser.get(sec, "directorio_modelo", fallback="")
-        ),
+        directorio_modelo=_obtener_requerido(parser, sec, "directorio_modelo"),
     )
 
     return Config(
