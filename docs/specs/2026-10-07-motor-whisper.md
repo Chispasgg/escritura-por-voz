@@ -14,7 +14,7 @@ GNOME Classic sobre X11 · RTX 4060 8 GB, driver 580 (CUDA 13) · cuDNN 9 en el 
 5. `parar.sh` detiene el motor que esté en marcha. Una sola instancia a la vez (fichero PID).
 
 ## Decisiones de diseño
-- **Captura de la tecla:** `XGrabKey` vía `python-xlib`. Captura la combinación en exclusiva, así que **el Escape no llega a la aplicación con foco**; si llegara, interrumpiría a Claude Code. La autorrepetición del teclado se neutraliza con *detectable auto-repeat* para que mantener pulsada la tecla no genere pulsaciones y sueltas falsas. También se registra con Bloq Mayús y Bloq Num activos.
+- **Captura de la tecla:** `XGrabKey` vía `python-xlib`. Captura la combinación en exclusiva, así que **el Escape no llega a la aplicación con foco**; si llegara, interrumpiría a Claude Code. La autorrepetición del teclado se neutraliza descartando los pares KeyRelease+KeyPress con el mismo timestamp (python-xlib 0.33 no expone XKB detectable auto-repeat), para que mantener pulsada la tecla no genere pulsaciones y sueltas falsas. También se registra con Bloq Mayús y Bloq Num activos.
 - **Modelo:** `large-v3-turbo`, `device=cuda`, `compute_type=float16`, con alternativa configurable a CPU `int8`. Un `initial_prompt` opcional con vocabulario técnico mejora la jerga.
 - **Configuración:** `config/config.ini` (stdlib `configparser`, sin dependencia YAML): motor activo, tecla, modelo, dispositivo, idioma, prompt inicial, duración mínima y ruta del modelo VOSK. `lanzar.sh` y el daemon leen solo de ahí.
 - **Dependencias nuevas:** `faster-whisper` (motor) y `python-xlib` (tecla global). No hay alternativa en la stdlib para ninguna de las dos.
