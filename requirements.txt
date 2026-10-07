@@ -1,0 +1,12 @@
+# Dependencias de escritura-por-voz (motor Whisper push-to-talk).
+# Versiones mínimas probadas; no se fijan versiones superiores para no bloquear
+# actualizaciones de seguridad.
+
+# Motor de transcripción Whisper (vía CTranslate2, compatible con GPU CUDA)
+faster-whisper>=1.0.0
+
+# Captura de tecla global en X11
+python-xlib>=0.33
+
+# Motor de transcripción VOSK (alternativa ligera en CPU)
+vosk>=0.3.45
