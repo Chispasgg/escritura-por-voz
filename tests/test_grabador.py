@@ -9,6 +9,7 @@ incorrectos (doble iniciar, detener sin iniciar, duración mínima).
 from __future__ import annotations
 
 import io
+import shutil
 import struct
 import subprocess
 import threading
@@ -81,6 +82,11 @@ class _ProcesoFalso:
             self._escribir.close()
         except Exception:
             pass
+
+    def poll(self) -> int | None:
+        # Antes de terminate(): returncode es None → proceso "vivo".
+        # Después: returncode está fijado por terminate()/kill().
+        return self.returncode
 
     def wait(self, timeout: float | None = None) -> int:
         self._terminado.wait(timeout=timeout)
@@ -334,6 +340,10 @@ class _ProcesoFalsoMuerteEspontanea:
 
         self.returncode = returncode
 
+    def poll(self) -> int | None:
+        # Proceso ya muerto desde el inicio: returncode siempre distinto de None.
+        return self.returncode
+
     def terminate(self) -> None:
         # El proceso ya no existe; simula el OSError que lanza Popen real
         raise OSError(3, "No such process")
@@ -424,10 +434,77 @@ class TestMuerteEspontanea(unittest.TestCase):
             lanzador=_lanzador_falso(datos),
         )
         g.iniciar()
-        # _ProcesoFalso.terminate() establece returncode=-15; no debe lanzar error
+        # _ProcesoFalso.poll() devuelve None (vivo); terminate() fija returncode=-15.
+        # Como poll() devolvió None, la lógica sabe que lo paramos nosotros y no
+        # interpreta el código de salida como error.
         arr = g.detener()
         self.assertIsInstance(arr, np.ndarray)
         self.assertEqual(arr.dtype, np.float32)
+
+    def test_proceso_vivo_con_cualquier_codigo_no_es_error(self):
+        """Si el proceso estaba vivo (poll()=None), cualquier código de salida es normal.
+
+        Reproduce el caso real: pw-record recibe SIGTERM pero sale con código 1
+        en lugar de -15. Sin la corrección de T-011, esto lanzaba GrabadorError.
+        """
+
+        class _ProcesoFalsoSaleConUno(_ProcesoFalso):
+            """Como _ProcesoFalso pero terminate() fija returncode=1 en vez de -15."""
+
+            def terminate(self) -> None:
+                self.returncode = 1
+                self._terminado.set()
+                try:
+                    self._escribir.close()
+                except Exception:
+                    pass
+
+        datos = _generar_pcm_s16(160)
+
+        def lanzar(_args: list[str]) -> _ProcesoFalsoSaleConUno:
+            return _ProcesoFalsoSaleConUno(datos)
+
+        g = GrabadorPipeWire(
+            frecuencia_muestreo=_HZ,
+            canales=_CANALES,
+            duracion_minima_s=0.0,
+            lanzador=lanzar,
+        )
+        g.iniciar()
+        # poll() devolverá None (proceso vivo) → aunque returncode final sea 1,
+        # no debe lanzar GrabadorError.
+        arr = g.detener()
+        self.assertIsInstance(arr, np.ndarray)
+        self.assertEqual(arr.dtype, np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Test de integración con pw-record real
+# ---------------------------------------------------------------------------
+
+
+@unittest.skipUnless(shutil.which("pw-record") is not None, "pw-record no disponible")
+class TestIntegracionPwRecord(unittest.TestCase):
+    """Prueba con el binario real de pw-record.
+
+    Habría detectado la regresión de T-011 antes de que llegara al daemon:
+    con _RETURNCODES_NORMALES, iniciar() + detener() con pw-record real lanzaba
+    GrabadorError porque pw-record sale con código 1 al recibir SIGTERM.
+    """
+
+    def test_ciclo_real_no_lanza_y_devuelve_float32(self):
+        """iniciar() + 0,5 s + detener() → ndarray float32 no vacío, sin excepción."""
+        g = GrabadorPipeWire(
+            frecuencia_muestreo=16000,
+            canales=1,
+            duracion_minima_s=0.0,
+        )
+        g.iniciar()
+        time.sleep(0.5)
+        arr = g.detener()
+        self.assertIsInstance(arr, np.ndarray)
+        self.assertEqual(arr.dtype, np.float32)
+        self.assertGreater(len(arr), 0)
 
 
 if __name__ == "__main__":

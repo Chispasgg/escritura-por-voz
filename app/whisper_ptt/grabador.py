@@ -103,14 +103,6 @@ def _lanzador_real(args: list[str]) -> subprocess.Popen:
 _BYTES_POR_MUESTRA = 2
 _RANGO_S16 = 32768.0  # 2^15 — divisor para normalizar a [-1, 1]
 
-# Returncodes que indican terminación esperada y no-errónea:
-#   0   → pw-record salió limpiamente (raro mid-grabación pero no es un fallo)
-#  -15  → SIGTERM que nosotros enviamos con terminate()
-#  -9   → SIGKILL que nosotros enviamos tras timeout
-# Cualquier otro código (positivo = error del proceso; otro negativo = señal ajena)
-# se considera muerte espontánea con error y se propaga como GrabadorError.
-_RETURNCODES_NORMALES: frozenset[int | None] = frozenset({0, -15, -9})
-
 
 class GrabadorPipeWire:
     """
@@ -219,6 +211,13 @@ class GrabadorPipeWire:
         self._buffer = None
         self._inicio_s = None
 
+        # Instantánea ANTES de terminate(): distingue «murió solo» de «lo paramos
+        # nosotros». poll() devuelve None si el proceso sigue vivo y el returncode
+        # si ya terminó. Capturar aquí es la única forma fiable porque pw-record
+        # puede salir con código 1 al recibir SIGTERM, haciendo imposible distinguir
+        # «nuestra señal» de «error» mirando solo el código de retorno final.
+        returncode_espontaneo = proceso.poll()
+
         try:
             _terminar_proceso(proceso)
         finally:
@@ -247,13 +246,19 @@ class GrabadorPipeWire:
                 except OSError:
                     pass
 
-        # Detectar muerte espontánea con error: si el código de retorno no es uno
-        # de los que nosotros provocamos, pw-record falló por su cuenta.
-        if proceso.returncode not in _RETURNCODES_NORMALES:
+        # Error solo si el proceso ya había muerto ANTES de que lo paráramos y
+        # salió con código distinto de 0:
+        #   returncode_espontaneo is None  → estaba vivo, lo paramos nosotros;
+        #                                    cualquier código de salida es aceptable.
+        #   returncode_espontaneo == 0     → salida limpia (EOF en dispositivo u
+        #                                    otro motivo no-erróneo); el audio
+        #                                    capturado es válido.
+        #   returncode_espontaneo != 0     → murió solo con error → GrabadorError.
+        if returncode_espontaneo is not None and returncode_espontaneo != 0:
             fragmento = stderr_snippet.decode("utf-8", errors="replace").strip()
             raise GrabadorError(
                 COD_PROCESO_FALLO,
-                f"pw-record terminó inesperadamente (código {proceso.returncode}). Stderr: {fragmento!r}",
+                f"pw-record terminó inesperadamente (código {returncode_espontaneo}). Stderr: {fragmento!r}",
             )
 
         # Duración mínima: si la grabación es muy corta, descartarla
