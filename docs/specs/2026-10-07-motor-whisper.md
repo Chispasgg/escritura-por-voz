@@ -9,7 +9,7 @@ GNOME Classic sobre X11 · RTX 4060 8 GB, driver 580 (CUDA 13) · cuDNN 9 en el 
 ## Comportamiento
 1. `lanzar.sh` arranca el motor configurado. Con Whisper, un daemon residente carga el modelo **una sola vez** y espera.
 2. Pulsar Ctrl+Escape → empieza a grabar (16 kHz mono, `pw-record`).
-3. Soltar → para, transcribe (`language="es"`, filtro VAD) y pega el texto con el mismo mecanismo actual (`xclip` + `xdotool` Ctrl+V), seguido de un espacio.
+3. Soltar → para, transcribe (`language="es"`, filtro VAD) y pega el texto, seguido de un espacio: lo copia con `xclip` a las selecciones de `[salida] selecciones` (por defecto CLIPBOARD y PRIMARY) y pulsa `[salida] tecla_pegar` (por defecto Shift+Insert) con `xdotool`. Así funciona en terminales como WezTerm o xterm, que leen PRIMARY, y en GTK y Firefox, que leen CLIPBOARD (cambio de T-009).
 4. Grabaciones más cortas que un mínimo configurable o transcripciones vacías se ignoran.
 5. `parar.sh` detiene el motor que esté en marcha. Una sola instancia a la vez (fichero PID).
 
